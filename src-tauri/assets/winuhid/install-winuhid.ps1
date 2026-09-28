@@ -158,13 +158,50 @@ function Repair-WinUHidHardwareId {
   return $repaired
 }
 
+function Get-WinUHidRootNodes {
+    try {
+        return @(Get-PnpDevice -ErrorAction SilentlyContinue | Where-Object {
+            ($_.HardwareID -contains $HardwareId) -or ($_.InstanceId -like 'ROOT\WINUHID*')
+        } | Sort-Object InstanceId)
+    } catch {
+        return @()
+    }
+}
+
 function Test-RootDeviceNodeListed([string] $PnputilPath) {
-  try {
-    $text = (& $PnputilPath /enum-devices /instanceid $HardwareId 2>&1 | Out-String)
-    return ($text -match [regex]::Escape($HardwareId))
-  } catch {
-    return $false
-  }
+    if ((Get-WinUHidRootNodes).Count -gt 0) {
+        return $true
+    }
+    try {
+        $text = (& $PnputilPath /enum-devices /ids 2>&1 | Out-String)
+        return ($text -match [regex]::Escape($HardwareId))
+    } catch {
+        return $false
+    }
+}
+
+function Remove-DuplicateRootNodes([string] $PnputilPath) {
+    $nodes = Get-WinUHidRootNodes
+    if ($nodes.Count -le 1) {
+        return 0
+    }
+    $keep = $nodes[0].InstanceId
+    Write-Phase "RegisterRoot" ("dedupe keep=" + $keep + " extra=" + ($nodes.Count - 1))
+    $removed = 0
+    foreach ($n in ($nodes | Select-Object -Skip 1)) {
+        try {
+            & $PnputilPath /remove-device $n.InstanceId
+            if ($LASTEXITCODE -eq 0) {
+                $removed++
+            } else {
+                Write-Phase "RegisterRoot" ("dedupe skip exit=" + $LASTEXITCODE + " " + $n.InstanceId)
+            }
+        } catch {
+            Write-Phase "RegisterRoot" ("dedupe skip " + $n.InstanceId + " : " + $_.Exception.Message)
+        }
+    }
+    Write-Phase "RegisterRoot" ("dedupe removed=" + $removed)
+    return $removed
 }
 
 function Invoke-PnputilPhase {
@@ -190,6 +227,7 @@ function Register-RootDeviceNode([string] $InfPath, [string] $PnputilPath) {
   $null = Repair-WinUHidHardwareId
 
   if (Test-RootDeviceNodeListed $PnputilPath) {
+    $null = Remove-DuplicateRootNodes $PnputilPath
     Write-Phase "RegisterRoot" "node already listed ($HardwareId)"
     return
   }
@@ -338,7 +376,8 @@ try {
           exit 3010
         }
         # Device still down, but Windows did not demand a reboot. Caller should retry auto-repair.
-        Write-Phase "Verify" "not reachable after bind+scan; retry auto-repair (no reboot)"
+        # Hint: check System Event 219 for \Driver\WudfRd status (e.g. 0xC0000365 = UMDF config mismatch).
+        Write-Phase "Verify" "not reachable after bind+scan; check System Event 219 WudfRd status; retry auto-repair (no reboot)"
         exit 1
       }
 
