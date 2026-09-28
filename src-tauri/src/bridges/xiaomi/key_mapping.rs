@@ -364,7 +364,7 @@ fn repeats() -> parking_lot::MutexGuard<'static, Option<HashMap<String, u64>>> {
 /// 方向/OK 固件直通 DOWN 时刻（LL hook 记录，仅非注入）：mapped 决策时
 /// 若 100ms 内见过 → 跳过重注，固件自己成对交付；否则走 mapped 并按 recent 吞残留。
 /// 零新增延迟：只查过去，不等待未来。
-static FIRMWARE_DPAD_OK_DOWN: Mutex<HashMap<u16, Instant>> = Mutex::new(HashMap::new());
+static FIRMWARE_DPAD_OK_DOWN: Mutex<Option<HashMap<u16, Instant>>> = Mutex::new(None);
 /// firmware-won 的 VK：UP 处理时跳过 direct mark（让固件 UP 通过），防粘键。
 static FIRMWARE_WON_VKS: Mutex<Vec<u16>> = Mutex::new(Vec::new());
 
@@ -377,13 +377,22 @@ fn is_firmware_dpad_ok_vk(vk: u16) -> bool {
 
 pub fn note_firmware_dpad_ok_down(vk: u16) {
     if is_firmware_dpad_ok_vk(vk) {
-        FIRMWARE_DPAD_OK_DOWN.lock().insert(vk, Instant::now());
+        firmware_downs().as_mut().unwrap().insert(vk, Instant::now());
     }
 }
 
+fn firmware_downs() -> parking_lot::MutexGuard<'static, Option<HashMap<u16, Instant>>> {
+    let mut g = FIRMWARE_DPAD_OK_DOWN.lock();
+    if g.is_none() {
+        *g = Some(HashMap::new());
+    }
+    g
+}
+
 pub fn firmware_dpad_ok_down_age_ms(vk: u16) -> Option<u64> {
-    FIRMWARE_DPAD_OK_DOWN
-        .lock()
+    firmware_downs()
+        .as_ref()
+        .unwrap()
         .get(&vk)
         .map(|t| t.elapsed().as_millis() as u64)
 }
