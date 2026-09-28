@@ -526,6 +526,8 @@ fn handle_ioctl(
         .collect();
 
     // 尽早 mark：LL 钩子仅凭 recent 吞固件 VK（不用 tap_ready，以免误伤实体键盘）
+    // 方向/OK 也要 early mark：固件 Enter/方向经常比 BLE 映射先到钩子，
+    // 不 mark 就会固件直通 extra + mapped 重注 = 双击（wedge 豆包语音）
     for &usage in &next {
         match XiaomiButton::from_hid_usage(usage) {
             XiaomiButton::Home => {
@@ -543,6 +545,21 @@ fn handle_ioctl(
             XiaomiButton::Mute => {
                 crate::bridges::xiaomi::key_mapping::mark_direct_signal("volume_mute");
                 crate::bridges::xiaomi::key_mapping::mark_direct_signal("mute");
+            }
+            XiaomiButton::Ok => {
+                crate::bridges::xiaomi::key_mapping::mark_direct_signal("ok");
+            }
+            XiaomiButton::DpadUp => {
+                crate::bridges::xiaomi::key_mapping::mark_direct_signal("up");
+            }
+            XiaomiButton::DpadDown => {
+                crate::bridges::xiaomi::key_mapping::mark_direct_signal("down");
+            }
+            XiaomiButton::DpadLeft => {
+                crate::bridges::xiaomi::key_mapping::mark_direct_signal("left");
+            }
+            XiaomiButton::DpadRight => {
+                crate::bridges::xiaomi::key_mapping::mark_direct_signal("right");
             }
             _ => {}
         }

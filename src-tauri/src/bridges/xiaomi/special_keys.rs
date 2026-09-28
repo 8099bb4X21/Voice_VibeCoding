@@ -600,10 +600,12 @@ pub fn should_suppress_native_menu_home(vk: u16, _tap_ready: bool, recent_signal
 
 /// 方向键 / OK 原生抑制。
 ///
-/// - OK→Enter 与方向键：Tap 就绪时**一律**吞固件原生（down+up），只留 mapped 重注。
-///   否则固件直通 extra + mapped 重注 = 双击，会把豆包语音面板打进 wedged 态
-///  （RAlt 再干净也唤不醒，只能物理同键或重注册快捷键复位）；
-///   Tap 未就绪时仍透传，遥控器退化为普通按键。
+/// - Tap 就绪 + 自定义映射：吞固件 VK（Up→M 防先上移）；
+/// - 其余：仅 recent（200/250ms 内遥控器刚动过）才吞固件残留。
+///   **不得**用 tap_ready 一刀切：固件 VK 与物理键盘在 LL 无法区分，
+///   一刀切会把物理方向/OK 一起吞掉（HID Tap 启动后物理键全灭）。
+///   遥控器侧由 `hid_report_tap` 尽早 mark（方向/OK 含在内），
+///   mapped 重注与固件直通二选一，消除双触发 wedge 豆包语音。
 /// - 左=Left 身份映射：不进自定义表 → 真实键盘左仍可用；
 /// - Home/Menu：见 [`should_suppress_native_menu_home`]（仅 recent，不误伤实体 Home）；
 /// - `recent`：兜底。
@@ -612,9 +614,6 @@ pub fn should_suppress_native_dpad_ok(vk: u16, tap_ready: bool, recent_signal: b
     let is_dpad_or_ok = matches!(vk, 0x25 | 0x26 | 0x27 | 0x28 | 0x0D);
     if !is_dpad_or_ok {
         return false;
-    }
-    if tap_ready {
-        return true;
     }
     if recent_signal {
         return true;
@@ -700,18 +699,19 @@ mod tests {
     use crate::bridges::xiaomi::key_mapping::set_dpad_ok_custom_suppress_vks;
 
     #[test]
-    fn dpad_ok_always_suppressed_when_tap_ready() {
-        // 方向/OK 双投递会 wedge 豆包语音：tap 就绪时固件原生必吞，只留 mapped
+    fn custom_up_suppressed_when_tap_ready() {
+        set_dpad_ok_custom_suppress_vks(&[0x26]);
+        assert!(should_suppress_native_dpad_ok(0x26, true, false));
+        assert!(!should_suppress_native_dpad_ok(0x25, true, false));
         set_dpad_ok_custom_suppress_vks(&[]);
-        for vk in [0x25, 0x26, 0x27, 0x28, 0x0D] {
-            assert!(should_suppress_native_dpad_ok(vk, true, false));
-            assert!(should_suppress_native_dpad_ok(vk, true, true));
-        }
-        // tap 未就绪：透传，遥控器退化为普通按键
-        for vk in [0x25, 0x26, 0x27, 0x28, 0x0D] {
-            assert!(!should_suppress_native_dpad_ok(vk, false, false));
-        }
+    }
+
+    #[test]
+    fn identity_not_suppressed_on_tap_ready_alone() {
+        // tap_ready 不得一刀切：固件与物理键无法区分，一刀切会吞物理方向/OK
         set_dpad_ok_custom_suppress_vks(&[]);
+        assert!(!should_suppress_native_dpad_ok(0x26, true, false));
+        assert!(!should_suppress_native_dpad_ok(0x0D, true, false));
     }
 
     #[test]

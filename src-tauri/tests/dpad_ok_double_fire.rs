@@ -1,4 +1,5 @@
-//! 方向/OK：Tap 就绪时一律吞固件原生，只留 mapped 重注（防双击 wedge 豆包语音）。
+//! 方向/OK：自定义映射用 Home 同款 tap_ready 吞固件 VK；身份映射不误伤真实键盘。
+//! 遥控器信号由 hid_report_tap 尽早 mark，recent 窗内吞固件残留，消双触发。
 //!
 //!   cargo test --manifest-path src-tauri/Cargo.toml --test dpad_ok_double_fire -- --nocapture
 
@@ -8,22 +9,20 @@ use remote_bridge_hub_lib::bridges::xiaomi::key_mapping::{
 use remote_bridge_hub_lib::bridges::xiaomi::special_keys::should_suppress_native_dpad_ok;
 
 #[test]
-fn dpad_ok_suppressed_when_tap_ready_regardless_of_custom_list() {
-    // 固件直通 extra + mapped 重注 = 双击；tap 就绪即吞，不再依赖自定义表
-    set_dpad_ok_custom_suppress_vks(&[]);
-    for vk in [0x25, 0x26, 0x27, 0x28, 0x0D] {
-        assert!(should_suppress_native_dpad_ok(vk, true, false));
-    }
+fn up_mapped_to_m_suppresses_firmware_up_when_tap_ready() {
+    // 与 Home→Space 相同：Tap 就绪即吞固件原生，消除空闲单点「先 M 后上」
+    set_dpad_ok_custom_suppress_vks(&[0x26]);
+    assert!(should_suppress_native_dpad_ok(0x26, true, false));
+    // 身份左不在表内 → 真实键盘左仍可用
+    assert!(!should_suppress_native_dpad_ok(0x25, true, false));
     set_dpad_ok_custom_suppress_vks(&[]);
 }
 
 #[test]
-fn dpad_ok_passthrough_when_tap_not_ready() {
-    // Tap 未就绪：透传，遥控器退化为普通按键
+fn identity_ok_not_suppressed_on_tap_ready_alone() {
     set_dpad_ok_custom_suppress_vks(&[]);
-    for vk in [0x25, 0x26, 0x27, 0x28, 0x0D] {
-        assert!(!should_suppress_native_dpad_ok(vk, false, false));
-    }
+    assert!(!should_suppress_native_dpad_ok(0x0D, true, false));
+    assert!(!should_suppress_native_dpad_ok(0x25, true, false));
 }
 
 #[test]
