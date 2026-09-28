@@ -598,13 +598,12 @@ pub fn should_suppress_native_menu_home(vk: u16, _tap_ready: bool, recent_signal
     is_menu_or_home && recent_signal
 }
 
-/// 方向键 / OK 原生抑制（范围限于「自定义映射」的固件 VK）。
+/// 方向键 / OK 原生抑制。
 ///
-/// - Up→M：Tap 就绪时吞 VK_UP（否则空闲单点会先 M 后上）；此时实体「上」会暂不可用；
-/// - OK→Enter：Tap 就绪时**一律**吞固件 Enter（down+up），只留 mapped 重注。
-///   否则固件直通 extra + mapped 重注 = 双 Enter，会把豆包语音面板打进 wedged 态
-///  （RAlt 再干净也唤不醒，只能物理 Enter 或重注册快捷键复位）；
-///   Tap 未就绪时仍透传，遥控器退化为普通 Enter。
+/// - OK→Enter 与方向键：Tap 就绪时**一律**吞固件原生（down+up），只留 mapped 重注。
+///   否则固件直通 extra + mapped 重注 = 双击，会把豆包语音面板打进 wedged 态
+///  （RAlt 再干净也唤不醒，只能物理同键或重注册快捷键复位）；
+///   Tap 未就绪时仍透传，遥控器退化为普通按键。
 /// - 左=Left 身份映射：不进自定义表 → 真实键盘左仍可用；
 /// - Home/Menu：见 [`should_suppress_native_menu_home`]（仅 recent，不误伤实体 Home）；
 /// - `recent`：兜底。
@@ -614,7 +613,7 @@ pub fn should_suppress_native_dpad_ok(vk: u16, tap_ready: bool, recent_signal: b
     if !is_dpad_or_ok {
         return false;
     }
-    if vk == 0x0D && tap_ready {
+    if tap_ready {
         return true;
     }
     if recent_signal {
@@ -701,27 +700,18 @@ mod tests {
     use crate::bridges::xiaomi::key_mapping::set_dpad_ok_custom_suppress_vks;
 
     #[test]
-    fn custom_up_suppressed_when_tap_ready() {
-        set_dpad_ok_custom_suppress_vks(&[0x26]);
-        assert!(should_suppress_native_dpad_ok(0x26, true, false));
-        assert!(!should_suppress_native_dpad_ok(0x25, true, false));
+    fn dpad_ok_always_suppressed_when_tap_ready() {
+        // 方向/OK 双投递会 wedge 豆包语音：tap 就绪时固件原生必吞，只留 mapped
         set_dpad_ok_custom_suppress_vks(&[]);
-    }
-
-    #[test]
-    fn identity_not_suppressed_on_tap_ready_alone() {
+        for vk in [0x25, 0x26, 0x27, 0x28, 0x0D] {
+            assert!(should_suppress_native_dpad_ok(vk, true, false));
+            assert!(should_suppress_native_dpad_ok(vk, true, true));
+        }
+        // tap 未就绪：透传，遥控器退化为普通按键
+        for vk in [0x25, 0x26, 0x27, 0x28, 0x0D] {
+            assert!(!should_suppress_native_dpad_ok(vk, false, false));
+        }
         set_dpad_ok_custom_suppress_vks(&[]);
-        assert!(!should_suppress_native_dpad_ok(0x26, true, false));
-    }
-
-    #[test]
-    fn ok_always_suppressed_when_tap_ready() {
-        // OK→Enter 双投递会 wedge 豆包语音：tap 就绪时固件 Enter 必吞，只留 mapped
-        set_dpad_ok_custom_suppress_vks(&[]);
-        assert!(should_suppress_native_dpad_ok(0x0D, true, false));
-        assert!(should_suppress_native_dpad_ok(0x0D, true, true));
-        // tap 未就绪：透传，遥控器退化为普通 Enter
-        assert!(!should_suppress_native_dpad_ok(0x0D, false, false));
     }
 
     #[test]
