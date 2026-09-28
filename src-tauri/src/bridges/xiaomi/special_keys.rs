@@ -454,6 +454,10 @@ fn hook_loop() {
 
             // 诊断：监视窗内未吞掉的原生键 = 实际漏到系统的输出（标红）
             if down {
+                // 方向/OK 确定性二选一：只记固件原生（非注入），mapped 决策用它避重
+                if !injected {
+                    crate::bridges::xiaomi::key_mapping::note_firmware_dpad_ok_down(vk as u16);
+                }
                 crate::bridges::xiaomi::key_log::report_native_passthrough(vk as u16, true);
             }
         }

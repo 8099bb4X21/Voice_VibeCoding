@@ -4,7 +4,9 @@
 //!   cargo test --manifest-path src-tauri/Cargo.toml --test dpad_ok_double_fire -- --nocapture
 
 use remote_bridge_hub_lib::bridges::xiaomi::key_mapping::{
+    firmware_dpad_ok_down_age_ms, note_firmware_dpad_ok_down,
     set_dpad_ok_custom_suppress_vks, should_gate_block_dpad_ok_mapping,
+    should_skip_mapped_for_firmware_win, FIRMWARE_PRE_WINDOW_MS,
 };
 use remote_bridge_hub_lib::bridges::xiaomi::special_keys::should_suppress_native_dpad_ok;
 
@@ -29,6 +31,32 @@ fn identity_ok_not_suppressed_on_tap_ready_alone() {
 fn recent_still_suppresses() {
     set_dpad_ok_custom_suppress_vks(&[]);
     assert!(should_suppress_native_dpad_ok(0x26, false, true));
+}
+
+#[test]
+fn firmware_win_skips_mapped() {
+    // 固件 DOWN 先到（100ms 内）→ 跳过重注，单次投递
+    assert!(should_skip_mapped_for_firmware_win(
+        Some(20),
+        FIRMWARE_PRE_WINDOW_MS
+    ));
+    assert!(!should_skip_mapped_for_firmware_win(
+        Some(500),
+        FIRMWARE_PRE_WINDOW_MS
+    ));
+    assert!(!should_skip_mapped_for_firmware_win(
+        None,
+        FIRMWARE_PRE_WINDOW_MS
+    ));
+}
+
+#[test]
+fn firmware_note_records_recent_down() {
+    note_firmware_dpad_ok_down(0x0D);
+    let age = firmware_dpad_ok_down_age_ms(0x0D);
+    assert!(age.is_some_and(|a| a <= FIRMWARE_PRE_WINDOW_MS));
+    // 非方向/OK 不记录
+    assert!(firmware_dpad_ok_down_age_ms(0x41).is_none());
 }
 
 #[test]

@@ -361,6 +361,41 @@ fn repeats() -> parking_lot::MutexGuard<'static, Option<HashMap<String, u64>>> {
     g
 }
 
+/// 方向/OK 固件直通 DOWN 时刻（LL hook 记录，仅非注入）：mapped 决策时
+/// 若 100ms 内见过 → 跳过重注，固件自己成对交付；否则走 mapped 并按 recent 吞残留。
+/// 零新增延迟：只查过去，不等待未来。
+static FIRMWARE_DPAD_OK_DOWN: Mutex<HashMap<u16, Instant>> = Mutex::new(HashMap::new());
+/// firmware-won 的 VK：UP 处理时跳过 direct mark（让固件 UP 通过），防粘键。
+static FIRMWARE_WON_VKS: Mutex<Vec<u16>> = Mutex::new(Vec::new());
+
+/// 固件先到的判定窗（ms）：HID 翻译通常比 BLE 信号处理快几十 ms。
+pub const FIRMWARE_PRE_WINDOW_MS: u64 = 100;
+
+fn is_firmware_dpad_ok_vk(vk: u16) -> bool {
+    matches!(vk, 0x25 | 0x26 | 0x27 | 0x28 | 0x0D)
+}
+
+pub fn note_firmware_dpad_ok_down(vk: u16) {
+    if is_firmware_dpad_ok_vk(vk) {
+        FIRMWARE_DPAD_OK_DOWN.lock().insert(vk, Instant::now());
+    }
+}
+
+pub fn firmware_dpad_ok_down_age_ms(vk: u16) -> Option<u64> {
+    FIRMWARE_DPAD_OK_DOWN
+        .lock()
+        .get(&vk)
+        .map(|t| t.elapsed().as_millis() as u64)
+}
+
+/// 纯函数：固件 DOWN 先到（100ms 内）→ 跳过 mapped，单次投递不断对。
+pub fn should_skip_mapped_for_firmware_win(
+    firmware_age_ms: Option<u64>,
+    pre_window_ms: u64,
+) -> bool {
+    matches!(firmware_age_ms, Some(age) if age <= pre_window_ms)
+}
+
 /// HID DIRECT 刚触发某键：供 special hook 抑制 Windows 原键
 pub fn mark_direct_signal(name: &str) {
     marks().as_mut().unwrap().insert(name.to_string(), Instant::now());
@@ -777,6 +812,19 @@ pub fn on_remote_button(app: &AppHandle, button_id: &str, pressed: bool) {
     }
 
     if !pressed {
+        // firmware-won 的那次：跳过 mark，让固件 UP 通过，否则粘键
+        if let Some(fw) = firmware_vk_for_dpad_ok(button_id) {
+            let mut won = FIRMWARE_WON_VKS.lock();
+            if won.contains(&fw) {
+                won.retain(|v| *v != fw);
+                drop(won);
+                cancel_repeat(button_id);
+                for alt in binding_aliases(button_id) {
+                    cancel_repeat(alt);
+                }
+                return;
+            }
+        }
         mark_direct_signal(button_id);
         cancel_repeat(button_id);
         for alt in binding_aliases(button_id) {
@@ -792,7 +840,24 @@ pub fn on_remote_button(app: &AppHandle, button_id: &str, pressed: bool) {
 
     // 方向/OK：一律注入（gadget 清固件 usage）；先 mark 再注入，便于 LL 按 recent 吞残留
     refresh_dpad_ok_custom_suppress_mask(&config);
-    mark_direct_signal(button_id);
+    // 确定性二选一：固件 DOWN 已先到（hook 已记录）→ 跳过重注，不 mark，
+    // 固件自己成对交付；否则走 mapped，固件后到的残留按 recent 吞掉。
+    if let Some(fw) = firmware_vk_for_dpad_ok(button_id) {
+        if should_skip_mapped_for_firmware_win(
+            firmware_dpad_ok_down_age_ms(fw),
+            FIRMWARE_PRE_WINDOW_MS,
+        ) {
+            let mut won = FIRMWARE_WON_VKS.lock();
+            if !won.contains(&fw) {
+                won.push(fw);
+            }
+            log::info!("XIAOMI MAPPING key={button_id} firmware-won, skip mapped");
+            return;
+        }
+        mark_direct_signal(button_id);
+    } else {
+        mark_direct_signal(button_id);
+    }
     let triggered = perform_button_action(&config, button_id);
     log::debug!("XIAOMI MAPPING key={button_id} mapped={triggered} pressed=true");
 
