@@ -67,6 +67,26 @@ pub fn recover_count() -> u64 {
     RECOVER_COUNT.load(Ordering::Relaxed)
 }
 
+/// WinUHid 释放是异步的：报告提交后要过几毫秒 GetAsyncKeyState 才反映「已抬起」。
+/// 紧跟着抢读会误判「仍卡住」，于是每次释放都补一记注入 KEYUP，污染豆包/微信的
+/// 热键边沿观测。故先静置 ms 再读，仅真卡键才回补。
+#[cfg(target_os = "windows")]
+fn get_async_down_after_settle(vk: u16, settle_ms: u64) -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
+    std::thread::sleep(std::time::Duration::from_millis(settle_ms));
+    (unsafe { GetAsyncKeyState(vk as i32) } as u16) & 0x8000 != 0
+}
+
+#[cfg(not(target_os = "windows"))]
+fn get_async_down_after_settle(_vk: u16, _settle_ms: u64) -> bool {
+    false
+}
+
+/// UP 后静置窗：VHF 异步报告通常数 ms 内生效。
+const SETTLE_AFTER_UP_MS: u64 = 20;
+/// DOWN 前静置窗：清理 foreign 修饰键，静置稍短以免拖慢注入。
+const SETTLE_BEFORE_DOWN_MS: u64 = 12;
+
 fn bump_recover(n: u32) {
     if n > 0 {
         RECOVER_COUNT.fetch_add(n as u64, Ordering::Relaxed);
@@ -77,8 +97,7 @@ fn bump_recover(n: u32) {
 #[cfg(target_os = "windows")]
 pub fn recover_chord_modifiers(chord: &[u16], send_keyup: impl Fn(&[u16]) -> bool) -> u32 {
     let stuck = modifiers_to_recover(chord, |vk| {
-        use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
-        (unsafe { GetAsyncKeyState(vk as i32) } as u16) & 0x8000 != 0
+        get_async_down_after_settle(vk, SETTLE_AFTER_UP_MS)
     });
     let mut cleared = 0u32;
     for vk in stuck {
@@ -99,10 +118,9 @@ pub fn recover_chord_modifiers(_chord: &[u16], _send_keyup: impl Fn(&[u16]) -> b
 /// DOWN 前：清和弦外的残留修饰键。
 #[cfg(target_os = "windows")]
 pub fn recover_foreign_modifiers(chord: &[u16], send_keyup: impl Fn(&[u16]) -> bool) -> u32 {
-    use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
     let mut cleared = 0u32;
     for vk in foreign_modifiers_for_chord(chord) {
-        let down = (unsafe { GetAsyncKeyState(vk as i32) } as u16) & 0x8000 != 0;
+        let down = get_async_down_after_settle(vk, SETTLE_BEFORE_DOWN_MS);
         if down && send_keyup(&[vk]) {
             cleared += 1;
             log::info!("XIAOMI VOICE sanitizer cleared foreign vk=0x{vk:02X}");
